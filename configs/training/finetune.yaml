@@ -1,0 +1,12 @@
+# Fine-tuning training configuration
+training:
+  mode: finetune
+  loss: crossentropy
+  epochs: 50
+  batch_size: 64
+  learning_rate: 1.0e-4
+  weight_decay: 1.0e-5
+  enable_class_weights: true
+  early_stopping_patience: 10
+  gradient_clip_max_norm: 1.0
+  layerwise_lr_decay: 0.9

@@ -1,0 +1,11 @@
+# Baseline experiment configuration
+# Runs all backbone + mode combinations for benchmark comparison
+
+defaults:
+  - override /backbone: resnet50
+  - override /training: finetune
+
+experiment:
+  name: baseline
+  seed: 42
+  description: "Baseline comparison of all backbones with fine-tuning"

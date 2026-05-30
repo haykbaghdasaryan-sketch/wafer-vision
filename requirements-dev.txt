@@ -1,0 +1,9 @@
+# Development and testing dependencies - pinned versions
+-r requirements.txt
+
+hypothesis==6.92.1
+pytest==7.4.4
+pytest-cov==4.1.0
+ruff==0.1.9
+mypy==1.8.0
+pre-commit==3.6.0

@@ -1,0 +1,5 @@
+# ResNet50 backbone configuration
+model:
+  backbone: resnet50
+  embedding_dim: 2048
+  pretrained: true

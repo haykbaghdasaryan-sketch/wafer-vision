@@ -1,0 +1,5 @@
+# EfficientNet-B0 backbone configuration
+model:
+  backbone: efficientnet_b0
+  embedding_dim: 1280
+  pretrained: true

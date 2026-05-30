@@ -1,0 +1,5 @@
+# ViT-B/16 backbone configuration
+model:
+  backbone: vit_b16
+  embedding_dim: 768
+  pretrained: true
