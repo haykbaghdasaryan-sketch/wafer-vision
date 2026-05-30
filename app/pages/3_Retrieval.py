@@ -1,3 +1,4 @@
+import app._path_fix  # noqa: F401
 """Retrieval page: query input, top-K gallery, model comparison."""
 
 import io

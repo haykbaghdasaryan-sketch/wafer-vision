@@ -1,3 +1,4 @@
+import app._path_fix  # noqa: F401
 """Explainability page: Grad-CAM heatmaps and attention rollout."""
 
 from pathlib import Path

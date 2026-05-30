@@ -1,3 +1,4 @@
+import app._path_fix  # noqa: F401
 """Embedding Explorer page: interactive 3D UMAP/t-SNE scatter."""
 
 from pathlib import Path

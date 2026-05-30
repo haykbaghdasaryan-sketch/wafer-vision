@@ -1,3 +1,4 @@
+import app._path_fix  # noqa: F401
 """Model Comparison page: metrics table, radar chart, side-by-side UMAP."""
 
 import io

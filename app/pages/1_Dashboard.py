@@ -1,3 +1,4 @@
+import app._path_fix  # noqa: F401
 """Dashboard page: dataset statistics, best model, UMAP overview."""
 
 from pathlib import Path

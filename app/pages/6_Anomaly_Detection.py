@@ -1,3 +1,4 @@
+import app._path_fix  # noqa: F401
 """Anomaly Detection page: threshold slider, distance histogram, flagged gallery."""
 
 from pathlib import Path

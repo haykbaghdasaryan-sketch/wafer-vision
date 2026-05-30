@@ -5,6 +5,13 @@ session state, renders the navigation sidebar, and shows the welcome
 banner for first-time visitors.
 """
 
+import sys
+from pathlib import Path
+# Ensure project root is on path for absolute imports
+_project_root = str(Path(__file__).resolve().parent.parent)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
 import streamlit as st
 
 from app.onboarding import show_onboarding
