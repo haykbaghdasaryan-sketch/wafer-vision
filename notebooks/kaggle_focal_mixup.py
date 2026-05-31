@@ -286,11 +286,11 @@ print(f"  Train batches/epoch: {len(train_loader)}")
 print()
 
 for epoch in range(EPOCHS):
-    # Warmup
+    # Warmup: linear ramp from 0 to target LR
     if epoch < WARMUP:
         lr_scale = (epoch + 1) / WARMUP
-        for pg in optimizer.param_groups:
-            pg["lr"] = pg["lr"] / lr_scale * ((epoch + 1) / WARMUP) if epoch > 0 else pg["lr"] * lr_scale
+        optimizer.param_groups[0]["lr"] = LR * 0.1 * lr_scale  # backbone
+        optimizer.param_groups[1]["lr"] = LR * lr_scale          # classifier head
 
     backbone.train(); classifier.train()
     t_loss, correct, total = 0.0, 0, 0
