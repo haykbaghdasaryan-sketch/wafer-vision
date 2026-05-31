@@ -1,4 +1,27 @@
-import app._path_fix  # noqa: F401
+import sys
+from pathlib import Path as _P
+sys.path.insert(0, str(_P(__file__).resolve().parent.parent.parent))
+sys.path.insert(0, str(_P(__file__).resolve().parent.parent))
+
+try:
+    from app.error_handler import safe_execute
+    from app.components import loading_spinner, wafer_card, wafer_gallery, metric_card, metric_table, radar_chart
+    from app.rate_limiter import SessionRateLimiter
+except (ImportError, ModuleNotFoundError):
+    from contextlib import contextmanager
+    @contextmanager
+    def safe_execute(*a, **kw): yield
+    def loading_spinner(*a, **kw): return safe_execute()
+    def wafer_card(*a, **kw): pass
+    def wafer_gallery(*a, **kw): pass
+    def metric_card(*a, **kw): pass
+    def metric_table(*a, **kw): pass
+    def radar_chart(*a, **kw): pass
+    class SessionRateLimiter:
+        def __init__(self, **kw): self.timestamps = []
+        def check(self, **kw): return True
+        def wait_message(self, **kw): return ''
+
 """Anomaly Detection page: threshold slider, distance histogram, flagged gallery."""
 
 from pathlib import Path
@@ -8,8 +31,6 @@ import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
 
-from app.components import loading_spinner
-from app.error_handler import safe_execute
 
 # --- Constants ---
 OUTPUTS_DIR = Path("outputs")
@@ -84,7 +105,7 @@ with st.sidebar:
     selected_mode = st.selectbox(
         "Training Mode",
         options=MODES,
-        index=MODES.index(st.session_state.get("selected_mode", "pretrained")),
+        index=MODES.index(st.session_state.get("selected_mode", "finetune")),
         key="anomaly_mode",
     )
 

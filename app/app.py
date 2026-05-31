@@ -6,15 +6,26 @@ banner for first-time visitors.
 """
 
 import sys
+import importlib.util
 from pathlib import Path
-# Ensure project root is on path for absolute imports
+
+# Ensure project root is on path
 _project_root = str(Path(__file__).resolve().parent.parent)
+_app_dir = str(Path(__file__).resolve().parent)
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
-import streamlit as st
+# Direct file-based import to avoid namespace conflicts
+def _import_from_file(module_name, file_path):
+    spec = importlib.util.spec_from_file_location(module_name, file_path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
-from app.onboarding import show_onboarding
+_onboarding = _import_from_file("onboarding", Path(_app_dir) / "onboarding.py")
+show_onboarding = _onboarding.show_onboarding
+
+import streamlit as st
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -33,7 +44,7 @@ def _init_session_state() -> None:
         "visited_pages": set(),
         # Model selection
         "selected_model": "resnet50",
-        "selected_mode": "pretrained",
+        "selected_mode": "finetune",
         # Embedding explorer state
         "dim_reduction_method": "umap",
         "dim_reduction_dims": 3,
@@ -76,7 +87,7 @@ def _render_sidebar() -> None:
         ]
         for icon, name in pages:
             st.page_link(
-                f"app/pages/{pages.index((icon, name)) + 1}_{name.replace(' ', '_')}.py",
+                f"pages/{pages.index((icon, name)) + 1}_{name.replace(' ', '_')}.py",
                 label=f"{icon} {name}",
             )
 
