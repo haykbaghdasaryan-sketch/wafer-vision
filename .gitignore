@@ -3,9 +3,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.egg-info/
+*.egg
 dist/
 build/
-*.egg
 
 # Virtual environments
 .venv/
@@ -46,10 +46,3 @@ htmlcov/
 
 # Jupyter
 .ipynb_checkpoints/
-
-# Training scripts (local testing)
-train_real.py
-sanity_check.py
-run_pipeline.py
-check_data.py
-run_full_test.py
