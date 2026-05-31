@@ -10,7 +10,7 @@ from src.data.validation import (
     VALID_PIXEL_VALUES,
     MIN_SPATIAL_DIM,
 )
-from src.data.augmentation import WaferAugmentation, EvalTransform, SimCLRAugmentation
+from src.data.augmentation import WaferAugmentation, EvalTransform, SimCLRAugmentation, MixupAugmentation
 from src.data.sampler import BalancedBatchSampler
 
 __all__ = [
@@ -29,4 +29,5 @@ __all__ = [
     "WaferAugmentation",
     "EvalTransform",
     "SimCLRAugmentation",
+    "MixupAugmentation",
 ]

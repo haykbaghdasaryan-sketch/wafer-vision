@@ -1,0 +1,19 @@
+# Fine-tuning with Focal Loss + Mixup augmentation
+# Target: improve Loc (85% -> 90%+) and Scratch (84% -> 88%+)
+training:
+  mode: finetune
+  loss: focal
+  epochs: 60
+  batch_size: 64
+  learning_rate: 5.0e-5
+  weight_decay: 1.0e-5
+  enable_class_weights: true
+  early_stopping_patience: 15
+  gradient_clip_max_norm: 1.0
+  warmup_epochs: 5
+  # Focal Loss: gamma=2.0 down-weights easy (majority) examples
+  focal_gamma: 2.0
+  # Mixup: interpolates training pairs for smoother decision boundaries
+  mixup_enabled: true
+  mixup_alpha: 0.4
+  mixup_p: 0.5

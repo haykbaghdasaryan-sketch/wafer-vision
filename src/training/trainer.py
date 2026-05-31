@@ -31,12 +31,14 @@ from src.models.backbone import BaseBackbone
 from src.models.projection_head import ProjectionHead
 from src.training.early_stopping import EarlyStopping
 from src.training.losses import (
+    FocalLoss,
     NTXentLoss,
     SupervisedContrastiveLoss,
     TripletMarginLossWithMining,
     WeightedCrossEntropyLoss,
 )
 from src.training.scheduler import WarmupCosineScheduler
+from src.data.augmentation import MixupAugmentation
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +74,12 @@ class TrainingConfig:
     device: str = "cpu"
     collapse_threshold: float = 0.01
     verbose: bool = False
+    # Focal loss parameters
+    focal_gamma: float = 2.0
+    # Mixup parameters
+    mixup_enabled: bool = False
+    mixup_alpha: float = 0.4
+    mixup_p: float = 0.5
 
 
 @dataclass
@@ -132,6 +140,7 @@ class Trainer:
         self._optimizer: Optional[torch.optim.Optimizer] = None
         self._scheduler: Optional[WarmupCosineScheduler] = None
         self._early_stopping: Optional[EarlyStopping] = None
+        self._mixup: Optional[MixupAugmentation] = None
 
         # State
         self._start_epoch = 0
@@ -149,11 +158,26 @@ class Trainer:
             self._classifier_head = nn.Linear(
                 self.model.embedding_dim, config.num_classes
             ).to(self.device)
-            self._loss_fn = WeightedCrossEntropyLoss(
-                class_counts=config.class_counts,
-                num_classes=config.num_classes,
-                enable_weights=config.enable_class_weights,
-            ).to(self.device)
+
+            if config.loss_name == "focal":
+                self._loss_fn = FocalLoss(
+                    gamma=config.focal_gamma,
+                    class_counts=config.class_counts,
+                    num_classes=config.num_classes,
+                ).to(self.device)
+            else:
+                self._loss_fn = WeightedCrossEntropyLoss(
+                    class_counts=config.class_counts,
+                    num_classes=config.num_classes,
+                    enable_weights=config.enable_class_weights,
+                ).to(self.device)
+
+            # Initialize mixup if enabled
+            if config.mixup_enabled:
+                self._mixup = MixupAugmentation(
+                    alpha=config.mixup_alpha,
+                    p=config.mixup_p,
+                )
 
         elif config.mode == "metric":
             self._projection_head = ProjectionHead(
@@ -397,7 +421,7 @@ class Trainer:
             raise ValueError(f"Unknown training mode: {self.config.mode}")
 
     def _train_epoch_finetune(self, epoch: int) -> dict[str, float]:
-        """Fine-tune training epoch: CrossEntropy + classification head.
+        """Fine-tune training epoch: CrossEntropy/Focal + optional Mixup.
 
         Returns:
             Dict with 'loss' and 'accuracy' keys.
@@ -414,10 +438,24 @@ class Trainer:
         for batch_idx, batch in enumerate(self.train_loader):
             images, labels = batch[0].to(self.device), batch[1].to(self.device)
 
-            # Forward: backbone -> classifier head
-            embeddings = self.model(images)
-            logits = self._classifier_head(embeddings)  # type: ignore[misc]
-            loss = self._loss_fn(logits, labels)  # type: ignore[misc]
+            # Apply Mixup if enabled
+            if self._mixup is not None:
+                images_mixed, labels_a, labels_b, lam = self._mixup(images, labels)
+                embeddings = self.model(images_mixed)
+                logits = self._classifier_head(embeddings)  # type: ignore[misc]
+                # Mixup loss: weighted combination of loss on both label sets
+                loss = lam * self._loss_fn(logits, labels_a) + (1.0 - lam) * self._loss_fn(logits, labels_b)  # type: ignore[misc]
+                # For accuracy tracking, use the dominant label
+                preds = logits.argmax(dim=1)
+                correct += (lam * (preds == labels_a).float().sum().item()
+                            + (1.0 - lam) * (preds == labels_b).float().sum().item())
+            else:
+                # Standard forward pass (no mixup)
+                embeddings = self.model(images)
+                logits = self._classifier_head(embeddings)  # type: ignore[misc]
+                loss = self._loss_fn(logits, labels)  # type: ignore[misc]
+                preds = logits.argmax(dim=1)
+                correct += (preds == labels).sum().item()
 
             # Check for NaN/Inf
             self._check_loss(loss, epoch, batch_idx)
@@ -434,8 +472,6 @@ class Trainer:
                 self._total_gradient_updates += 1
 
             total_loss += loss.item() * images.size(0)
-            preds = logits.argmax(dim=1)
-            correct += (preds == labels).sum().item()
             total_samples += images.size(0)
 
             # Step-level logging

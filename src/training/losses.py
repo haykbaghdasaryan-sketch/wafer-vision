@@ -262,6 +262,90 @@ class NTXentLoss(nn.Module):
         return loss
 
 
+class FocalLoss(nn.Module):
+    """Focal Loss for class-imbalanced classification.
+
+    Down-weights easy examples and focuses on hard-to-classify samples.
+    Particularly effective for minority classes (Loc, Scratch) where the
+    model is over-confident on majority classes.
+
+    Loss = -alpha_t * (1 - p_t)^gamma * log(p_t)
+
+    Args:
+        gamma: Focusing parameter (default 2.0, range [0.5, 5.0]).
+            Higher gamma means stronger focus on hard examples.
+        alpha: Per-class weight tensor or None for uniform weights.
+            If class_counts is provided, alpha is computed from inverse-frequency.
+        class_counts: Per-class sample counts for automatic alpha computation.
+        num_classes: Number of classes (default 9).
+        reduction: 'mean' or 'sum' (default 'mean').
+    """
+
+    def __init__(
+        self,
+        gamma: float = 2.0,
+        alpha: Optional[torch.Tensor] = None,
+        class_counts: Optional[list[int]] = None,
+        num_classes: int = 9,
+        reduction: str = "mean",
+    ) -> None:
+        super().__init__()
+        self.gamma = gamma
+        self.reduction = reduction
+        self.num_classes = num_classes
+
+        # Compute alpha from class_counts if provided
+        if alpha is not None:
+            self.register_buffer("alpha", alpha)
+        elif class_counts is not None:
+            counts = torch.tensor(class_counts, dtype=torch.float32).clamp(min=1.0)
+            inv_freq = 1.0 / counts
+            # Normalize so weights sum to num_classes
+            alpha_tensor = inv_freq / inv_freq.sum() * num_classes
+            self.register_buffer("alpha", alpha_tensor)
+        else:
+            self.register_buffer("alpha", None)
+
+    def forward(
+        self, logits: torch.Tensor, labels: torch.Tensor
+    ) -> torch.Tensor:
+        """Compute focal loss.
+
+        Args:
+            logits: Shape (B, num_classes), raw model outputs.
+            labels: Shape (B,), integer class targets.
+
+        Returns:
+            Scalar loss >= 0.
+        """
+        # Compute softmax probabilities
+        probs = F.softmax(logits, dim=1)
+
+        # Gather the probability of the true class: p_t
+        # labels shape (B,) -> (B, 1) for gather
+        labels_one_hot = labels.unsqueeze(1)
+        p_t = probs.gather(1, labels_one_hot).squeeze(1)  # (B,)
+
+        # Focal modulating factor: (1 - p_t)^gamma
+        focal_weight = (1.0 - p_t) ** self.gamma
+
+        # Log probability (with numerical stability)
+        log_p_t = torch.log(p_t + 1e-8)
+
+        # Apply per-class alpha weighting if available
+        if self.alpha is not None:
+            alpha_t = self.alpha.to(logits.device)[labels]  # (B,)
+            loss = -alpha_t * focal_weight * log_p_t
+        else:
+            loss = -focal_weight * log_p_t
+
+        if self.reduction == "mean":
+            return loss.mean()
+        elif self.reduction == "sum":
+            return loss.sum()
+        return loss
+
+
 class WeightedCrossEntropyLoss(nn.Module):
     """Cross-entropy with optional inverse-frequency class weights.
 

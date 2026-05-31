@@ -167,6 +167,84 @@ class EvalTransform:
         return tensor
 
 
+class MixupAugmentation:
+    """Batch-level Mixup augmentation for classification training.
+
+    Linearly interpolates pairs of samples and their labels (as soft targets)
+    within a batch. Particularly effective for improving generalization on
+    minority classes like Loc and Scratch.
+
+    Reference: Zhang et al. "mixup: Beyond Empirical Risk Minimization" (2018)
+
+    Usage in training loop:
+        mixup = MixupAugmentation(alpha=0.4)
+        images_mixed, labels_a, labels_b, lam = mixup(images, labels)
+        logits = model(images_mixed)
+        loss = lam * criterion(logits, labels_a) + (1 - lam) * criterion(logits, labels_b)
+    """
+
+    def __init__(self, alpha: float = 0.4, p: float = 0.5) -> None:
+        """Initialize Mixup augmentation.
+
+        Args:
+            alpha: Beta distribution parameter controlling interpolation
+                strength. Higher alpha means more aggressive mixing. Range [0.1, 2.0].
+                alpha=0.4 is the sweet spot for image classification.
+            p: Probability of applying mixup to a given batch (default 0.5).
+
+        Raises:
+            ConfigValidationError: If alpha not in [0.1, 2.0] or p not in [0, 1].
+        """
+        if alpha < 0.1 or alpha > 2.0:
+            raise ConfigValidationError(
+                parameter="alpha",
+                value=alpha,
+                valid_range="[0.1, 2.0]",
+            )
+        if p < 0.0 or p > 1.0:
+            raise ConfigValidationError(
+                parameter="p",
+                value=p,
+                valid_range="[0.0, 1.0]",
+            )
+        self.alpha = alpha
+        self.p = p
+
+    def __call__(
+        self, images: torch.Tensor, labels: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, float]:
+        """Apply mixup to a batch.
+
+        Args:
+            images: Batch tensor of shape (B, C, H, W).
+            labels: Label tensor of shape (B,).
+
+        Returns:
+            Tuple of (mixed_images, labels_a, labels_b, lam) where:
+                - mixed_images: Interpolated images (B, C, H, W)
+                - labels_a: Original labels (B,)
+                - labels_b: Shuffled labels (B,)
+                - lam: Interpolation coefficient (float in [0.5, 1.0])
+        """
+        # Decide whether to apply mixup this batch
+        if torch.rand(1).item() > self.p:
+            return images, labels, labels, 1.0
+
+        # Sample lambda from Beta(alpha, alpha)
+        lam = torch.distributions.Beta(self.alpha, self.alpha).sample().item()
+        # Ensure lam >= 0.5 so labels_a is always the dominant class
+        lam = max(lam, 1.0 - lam)
+
+        batch_size = images.size(0)
+        # Random permutation for pairing
+        index = torch.randperm(batch_size, device=images.device)
+
+        mixed_images = lam * images + (1.0 - lam) * images[index]
+        labels_b = labels[index]
+
+        return mixed_images, labels, labels_b, lam
+
+
 class SimCLRAugmentation:
     """Generates two independently augmented views for self-supervised training.
 

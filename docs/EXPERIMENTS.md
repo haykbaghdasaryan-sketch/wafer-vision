@@ -54,6 +54,38 @@
 - No ensemble methods explored
 - MAP computed at top-100 neighbors (approximation)
 
+---
+
+## Experiment: Focal Loss + Mixup (Targeting Loc/Scratch)
+
+**Hypothesis:** Loc (85%) and Scratch (84%) underperform because:
+1. Standard CE treats all misclassifications equally — focal loss down-weights easy majority-class examples (gamma=2.0)
+2. Decision boundaries for rare classes are underfitted — mixup (alpha=0.4) creates virtual training examples by interpolating between pairs
+
+**Config:** `configs/training/focal_mixup.yaml`
+```yaml
+training:
+  mode: finetune
+  loss: focal
+  focal_gamma: 2.0
+  mixup_enabled: true
+  mixup_alpha: 0.4
+  mixup_p: 0.5
+  epochs: 60
+  learning_rate: 5e-5
+  batch_size: 64
+```
+
+**Expected Impact:**
+- Focal loss → stronger gradients from hard Loc/Scratch samples that are currently misclassified with high confidence
+- Mixup → smoother embedding manifold, better generalization on underrepresented class boundaries
+- Combined: target +3-5% on Loc and Scratch without sacrificing majority-class accuracy
+
+**Run command:**
+```bash
+python scripts/run_benchmark.py --config configs/training/focal_mixup.yaml
+```
+
 ## Hardware & Timing
 
 | Platform | GPU | RAM | Training Time |
