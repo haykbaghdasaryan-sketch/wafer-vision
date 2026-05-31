@@ -1,17 +1,18 @@
 """
-WaferVision — Focal Loss + Mixup, FULL POWER, Multi-Backbone (Kaggle)
-======================================================================
+WaferVision — Focal Loss + Mixup, FULL POWER, 3 Backbones (Kaggle)
+====================================================================
 Instructions:
 1. Kaggle -> New Notebook
 2. Add Input: search "wm811k-wafer-map" by qingyi
 3. Settings: GPU T4 x2 (or P100), Internet ON
 4. Paste this into ONE cell, Run All
-5. ~5-8 hours total (ResNet50 + EfficientNet-B0)
+5. ~8-12 hours total (ResNet50 + EfficientNet-B0 + ViT-B/16)
 
-Runs TWO experiments:
+Runs THREE experiments:
   A) ResNet50 + Focal(γ=2.0) + Mixup(α=0.4) — 150 epochs
   B) EfficientNet-B0 + Focal(γ=2.0) + Mixup(α=0.4) — 150 epochs
-Both with ALL data, 96x96, lot-based honest eval.
+  C) ViT-B/16 + Focal(γ=2.0) + Mixup(α=0.4) — 150 epochs
+All with FULL data, 96x96 (ViT auto-resizes to 224), lot-based honest eval.
 """
 
 # ============================================================
@@ -406,11 +407,42 @@ classifier_efn = nn.Linear(1280, NUM_CLASSES).to(device)
 best_efn, time_efn = train_model(backbone_efn, classifier_efn, "EfficientNet-B0")
 results_efn = evaluate_model(backbone_efn, best_efn, "EfficientNet-B0")
 
+# Free GPU memory
+del backbone_efn, classifier_efn
+torch.cuda.empty_cache(); gc.collect()
+
+# ============================================================
+# EXPERIMENT C: ViT-B/16 + Focal + Mixup
+# ============================================================
+print("\n" + "="*65)
+print("  [6/7] EXPERIMENT C: ViT-B/16 + Focal(γ=2.0) + Mixup(α=0.4)")
+print("="*65)
+
+# ViT-B/16 needs 224x224 input — wrap with auto-resize
+class ViTWrapper(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.model = models.vit_b_16(weights=models.ViT_B_16_Weights.IMAGENET1K_V1)
+        self.model.heads = nn.Identity()
+    def forward(self, x):
+        # Resize from 96x96 to 224x224 for ViT
+        if x.shape[2] != 224 or x.shape[3] != 224:
+            x = F.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)
+        return self.model(x)
+
+backbone_vit = ViTWrapper().to(device)
+classifier_vit = nn.Linear(768, NUM_CLASSES).to(device)
+
+# ViT needs lower LR and more warmup (larger model, more sensitive)
+best_vit, time_vit = train_model(backbone_vit, classifier_vit, "ViT-B/16",
+                                  epochs=150, lr=1e-4, warmup=15, patience=30)
+results_vit = evaluate_model(backbone_vit, best_vit, "ViT-B/16")
+
 # ============================================================
 # COMPARISON TABLE
 # ============================================================
 print("\n\n" + "="*65)
-print("  [6/7] FINAL COMPARISON")
+print("  [7/7] FINAL COMPARISON — 3 Backbones × Focal+Mixup")
 print("="*65)
 print(f"\n  {'Method':<35} {'KNN@1':<8} {'KNN@3':<8} {'KNN@5':<8} {'KNN@10':<8} {'Time':<8}")
 print(f"  {'-'*75}")
@@ -420,29 +452,43 @@ print(f"  {'ResNet50 + Focal + Mixup':<35} "
 print(f"  {'EfficientNet-B0 + Focal + Mixup':<35} "
       f"{results_efn['KNN@1']*100:<8.1f} {results_efn['KNN@3']*100:<8.1f} "
       f"{results_efn['KNN@5']*100:<8.1f} {results_efn['KNN@10']*100:<8.1f} {time_efn/60:<.0f}min")
+print(f"  {'ViT-B/16 + Focal + Mixup':<35} "
+      f"{results_vit['KNN@1']*100:<8.1f} {results_vit['KNN@3']*100:<8.1f} "
+      f"{results_vit['KNN@5']*100:<8.1f} {results_vit['KNN@10']*100:<8.1f} {time_vit/60:<.0f}min")
 
 # Per-class comparison for Loc and Scratch (target classes)
 print(f"\n  Target class improvement (KNN@5):")
-print(f"  {'Class':<12} {'ResNet50':<12} {'EfficientNet-B0':<15}")
-print(f"  {'-'*40}")
-for cls in ["Loc", "Scratch"]:
+print(f"  {'Class':<12} {'ResNet50':<12} {'EffNet-B0':<12} {'ViT-B/16':<12}")
+print(f"  {'-'*48}")
+for cls in CLASSES:
     r50_acc = results_r50["per_class"].get(cls, (0, 0))[0]
     efn_acc = results_efn["per_class"].get(cls, (0, 0))[0]
-    print(f"  {cls:<12} {r50_acc*100:<12.1f} {efn_acc*100:<15.1f}")
+    vit_acc = results_vit["per_class"].get(cls, (0, 0))[0]
+    marker = " ← TARGET" if cls in ["Loc", "Scratch"] else ""
+    print(f"  {cls:<12} {r50_acc*100:<12.1f} {efn_acc*100:<12.1f} {vit_acc*100:<12.1f}{marker}")
 
 # ============================================================
 # SAVE
 # ============================================================
-print(f"\n[7/7] Saving checkpoints...")
+print(f"\n  Saving checkpoints...")
 torch.save(best_r50, "resnet50_focal_mixup_best.pth")
 torch.save(best_efn, "efficientnet_b0_focal_mixup_best.pth")
+torch.save(best_vit, "vit_b16_focal_mixup_best.pth")
+
+total_time = time_r50 + time_efn + time_vit
+best_model = max([("ResNet50", results_r50), ("EfficientNet-B0", results_efn), ("ViT-B/16", results_vit)],
+                 key=lambda x: x[1]["KNN@5"])
 
 print(f"\n{'='*65}")
-print(f"  ALL DONE")
+print(f"  FINAL SUMMARY")
 print(f"{'='*65}")
-print(f"  ResNet50 Macro KNN@5:       {results_r50['KNN@5']*100:.1f}%")
-print(f"  EfficientNet-B0 Macro KNN@5: {results_efn['KNN@5']*100:.1f}%")
-print(f"  Total time: {(time_r50+time_efn)/60:.0f} min")
-print(f"  GPU: {torch.cuda.get_device_name(0) if device.type=='cuda' else 'CPU'}")
+print(f"  Best model:    {best_model[0]} (Macro KNN@5 = {best_model[1]['KNN@5']*100:.1f}%)")
+print(f"  ResNet50:      {results_r50['KNN@5']*100:.1f}%")
+print(f"  EfficientNet:  {results_efn['KNN@5']*100:.1f}%")
+print(f"  ViT-B/16:      {results_vit['KNN@5']*100:.1f}%")
+print(f"  Total time:    {total_time/60:.0f} min ({total_time/3600:.1f} hrs)")
+print(f"  GPU:           {torch.cuda.get_device_name(0) if device.type=='cuda' else 'CPU'}")
+print(f"{'='*65}")
+print(f"\n  Copy this table to docs/EXPERIMENTS.md and push!")
 print(f"\n  Repo: https://github.com/haykbaghdasaryan-sketch/wafer-vision")
 print(f"  Branch: feat/focal-mixup")
