@@ -239,6 +239,10 @@ train_loader = DataLoader(WaferDS(train_data, train_labels, aug=True), batch_siz
 val_loader = DataLoader(WaferDS(val_data, val_labels), batch_size=256, num_workers=4, pin_memory=True)
 test_loader = DataLoader(WaferDS(test_data, test_labels), batch_size=256, num_workers=4, pin_memory=True)
 
+# IMPORTANT: separate loader for embedding extraction — no augmentation, no random sampling
+train_eval_loader = DataLoader(WaferDS(train_data, train_labels, aug=False),
+                               batch_size=256, shuffle=False, num_workers=4, pin_memory=True)
+
 # Focal loss alpha
 counts_t = torch.tensor([cc.get(i, 1) for i in range(NUM_CLASSES)], dtype=torch.float32)
 inv_freq = 1.0 / counts_t.clamp(min=1)
@@ -342,7 +346,7 @@ def evaluate_model(backbone, best_state, backbone_name):
                 E.append(backbone(x.to(device)).cpu()); L.append(y)
         return torch.cat(E).numpy(), torch.cat(L).numpy()
 
-    train_emb, train_lab = get_emb(train_loader)
+    train_emb, train_lab = get_emb(train_eval_loader)
     test_emb, test_lab = get_emb(test_loader)
 
     results = {}
