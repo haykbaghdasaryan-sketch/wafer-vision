@@ -13,6 +13,11 @@ Runs THREE experiments:
   B) EfficientNet-B0 + Focal(γ=2.0) + Mixup(α=0.4) — 150 epochs
   C) ViT-B/16 + Focal(γ=2.0) + Mixup(α=0.4) — 150 epochs
 All with FULL data, 96x96 (ViT auto-resizes to 224), lot-based honest eval.
+
+GPU memory is freed between models, and ViT uses REAL gradient checkpointing
+(torchvision has no built-in flag) + batch=32 to fit on a single T4.
+If ViT still OOMs or the kernel restarts, run notebooks/kaggle_vit_only.py
+to finish just the ViT experiment and print the final comparison table.
 """
 
 # ============================================================
@@ -251,10 +256,21 @@ alpha_w = (inv_freq / inv_freq.sum() * NUM_CLASSES).to(device)
 # ============================================================
 # TRAINING FUNCTION (reusable for both backbones)
 # ============================================================
-def train_model(backbone, classifier, backbone_name, epochs=150, lr=3e-4, warmup=10, patience=30):
+def train_model(backbone, classifier, backbone_name, epochs=150, lr=3e-4, warmup=10, patience=30, batch_override=None):
     """Train one model with Focal+Mixup. Returns (best_state, elapsed, history)."""
     criterion = FocalLoss(gamma=2.0, alpha=alpha_w)
     MIXUP_ALPHA, MIXUP_P = 0.4, 0.5
+
+    # Allow per-model batch size override (e.g. ViT needs smaller batch)
+    effective_batch = batch_override if batch_override else BATCH_SIZE
+    if batch_override:
+        # Fresh weighted sampler (same balancing) + augmentation, smaller batch for VRAM
+        _sampler = WeightedRandomSampler(
+            [1.0 / cc[l.item()] for l in train_labels], len(train_labels), replacement=True)
+        _train_loader = DataLoader(WaferDS(train_data, train_labels, aug=True), batch_size=effective_batch,
+                                   sampler=_sampler, num_workers=4, pin_memory=True, drop_last=True)
+    else:
+        _train_loader = train_loader
 
     optimizer = torch.optim.AdamW([
         {'params': backbone.parameters(), 'lr': lr * 0.1},
@@ -265,7 +281,7 @@ def train_model(backbone, classifier, backbone_name, epochs=150, lr=3e-4, warmup
     best_val_loss, best_state, patience_counter = float("inf"), None, 0
     t0 = time.time()
 
-    print(f"\n  [{backbone_name}] Epochs={epochs} LR={lr} (backbone={lr*0.1}) Batch={BATCH_SIZE}")
+    print(f"\n  [{backbone_name}] Epochs={epochs} LR={lr} (backbone={lr*0.1}) Batch={effective_batch}")
 
     for epoch in range(epochs):
         if epoch < warmup:
@@ -276,7 +292,7 @@ def train_model(backbone, classifier, backbone_name, epochs=150, lr=3e-4, warmup
         backbone.train(); classifier.train()
         t_loss, correct, total = 0.0, 0, 0
 
-        for imgs, lbls in train_loader:
+        for imgs, lbls in _train_loader:
             imgs, lbls = imgs.to(device, non_blocking=True), lbls.to(device, non_blocking=True)
             if torch.rand(1).item() < MIXUP_P:
                 imgs, la, lb, lam = mixup_batch(imgs, lbls, MIXUP_ALPHA)
@@ -416,49 +432,85 @@ del backbone_efn, classifier_efn
 torch.cuda.empty_cache(); gc.collect()
 
 # ============================================================
-# EXPERIMENT C: ViT-B/16 + Focal + Mixup
+# EXPERIMENT C: ViT-B/16 + Focal + Mixup (memory-safe)
 # ============================================================
 print("\n" + "="*65)
 print("  [6/7] EXPERIMENT C: ViT-B/16 + Focal(γ=2.0) + Mixup(α=0.4)")
 print("="*65)
 
-# ViT-B/16 needs 224x224 input — wrap with auto-resize
+# Aggressively free GPU before ViT (it needs ~10GB for 224x224)
+torch.cuda.empty_cache()
+gc.collect()
+print(f"  GPU free before ViT: {torch.cuda.memory_reserved(0)/1024**3:.1f}GB reserved, "
+      f"{(torch.cuda.get_device_properties(0).total_memory - torch.cuda.memory_allocated(0))/1024**3:.1f}GB free")
+
+# ViT-B/16 with REAL gradient checkpointing (torchvision has no built-in flag)
+from torch.utils.checkpoint import checkpoint_sequential
+
 class ViTWrapper(nn.Module):
-    def __init__(self):
+    def __init__(self, ckpt_segments=4):
         super().__init__()
         self.model = models.vit_b_16(weights=models.ViT_B_16_Weights.IMAGENET1K_V1)
         self.model.heads = nn.Identity()
+        self.ckpt_segments = ckpt_segments  # split 12 encoder layers into N checkpointed chunks
     def forward(self, x):
-        # Resize from 96x96 to 224x224 for ViT
         if x.shape[2] != 224 or x.shape[3] != 224:
             x = F.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)
-        return self.model(x)
+        # Replicate torchvision ViT forward, but checkpoint the transformer layers
+        x = self.model._process_input(x)
+        n = x.shape[0]
+        batch_class_token = self.model.class_token.expand(n, -1, -1)
+        x = torch.cat([batch_class_token, x], dim=1)
+        enc = self.model.encoder
+        x = x + enc.pos_embedding
+        x = enc.dropout(x)
+        if self.training and x.requires_grad:
+            x = checkpoint_sequential(enc.layers, self.ckpt_segments, x, use_reentrant=False)
+        else:
+            x = enc.layers(x)
+        x = enc.ln(x)
+        return x[:, 0]  # class token
 
-backbone_vit = ViTWrapper().to(device)
-classifier_vit = nn.Linear(768, NUM_CLASSES).to(device)
-
-# ViT needs lower LR and more warmup (larger model, more sensitive)
-best_vit, time_vit = train_model(backbone_vit, classifier_vit, "ViT-B/16",
-                                  epochs=150, lr=1e-4, warmup=15, patience=30)
-results_vit = evaluate_model(backbone_vit, best_vit, "ViT-B/16")
+try:
+    backbone_vit = ViTWrapper().to(device)
+    classifier_vit = nn.Linear(768, NUM_CLASSES).to(device)
+    # ViT: smaller batch (32) to fit in VRAM after gradient checkpointing
+    best_vit, time_vit = train_model(backbone_vit, classifier_vit, "ViT-B/16",
+                                      epochs=150, lr=1e-4, warmup=15, patience=30,
+                                      batch_override=32)
+    results_vit = evaluate_model(backbone_vit, best_vit, "ViT-B/16")
+    vit_success = True
+except torch.cuda.OutOfMemoryError:
+    print("  ViT OOM even with gradient checkpointing — skipping (needs >15GB VRAM)")
+    results_vit = {k: 0.0 for k in ['KNN@1','KNN@3','KNN@5','KNN@10']}
+    results_vit['per_class'] = {c: (0.0, 0) for c in CLASSES}
+    time_vit = 0
+    vit_success = False
 
 # ============================================================
-# COMPARISON TABLE
+# COMPARISON TABLE  (robust: only shows models that completed)
 # ============================================================
+# Collect into one dict so the summary never crashes on a missing/OOM model.
+ALL_RESULTS = {
+    "ResNet50":        {"res": results_r50, "time": time_r50, "ok": True},
+    "EfficientNet-B0": {"res": results_efn, "time": time_efn, "ok": True},
+    "ViT-B/16":        {"res": results_vit, "time": time_vit, "ok": vit_success},
+}
+
 print("\n\n" + "="*65)
 print("  [7/7] FINAL COMPARISON — 3 Backbones × Focal+Mixup")
 print("="*65)
 print(f"\n  {'Method':<35} {'KNN@1':<8} {'KNN@3':<8} {'KNN@5':<8} {'KNN@10':<8} {'Time':<8}")
 print(f"  {'-'*75}")
-print(f"  {'ResNet50 + Focal + Mixup':<35} "
-      f"{results_r50['KNN@1']*100:<8.1f} {results_r50['KNN@3']*100:<8.1f} "
-      f"{results_r50['KNN@5']*100:<8.1f} {results_r50['KNN@10']*100:<8.1f} {time_r50/60:<.0f}min")
-print(f"  {'EfficientNet-B0 + Focal + Mixup':<35} "
-      f"{results_efn['KNN@1']*100:<8.1f} {results_efn['KNN@3']*100:<8.1f} "
-      f"{results_efn['KNN@5']*100:<8.1f} {results_efn['KNN@10']*100:<8.1f} {time_efn/60:<.0f}min")
-print(f"  {'ViT-B/16 + Focal + Mixup':<35} "
-      f"{results_vit['KNN@1']*100:<8.1f} {results_vit['KNN@3']*100:<8.1f} "
-      f"{results_vit['KNN@5']*100:<8.1f} {results_vit['KNN@10']*100:<8.1f} {time_vit/60:<.0f}min")
+for name, d in ALL_RESULTS.items():
+    r = d["res"]
+    if d["ok"]:
+        tstr = f"{d['time']/60:.0f}min"
+        print(f"  {name + ' + Focal + Mixup':<35} "
+              f"{r['KNN@1']*100:<8.1f} {r['KNN@3']*100:<8.1f} "
+              f"{r['KNN@5']*100:<8.1f} {r['KNN@10']*100:<8.1f} {tstr:<8}")
+    else:
+        print(f"  {name + ' + Focal + Mixup':<35} {'OOM (needs >15GB VRAM)':<40}")
 
 # Per-class comparison for Loc and Scratch (target classes)
 print(f"\n  Target class improvement (KNN@5):")
@@ -477,11 +529,15 @@ for cls in CLASSES:
 print(f"\n  Saving checkpoints...")
 torch.save(best_r50, "resnet50_focal_mixup_best.pth")
 torch.save(best_efn, "efficientnet_b0_focal_mixup_best.pth")
-torch.save(best_vit, "vit_b16_focal_mixup_best.pth")
+if vit_success:
+    torch.save(best_vit, "vit_b16_focal_mixup_best.pth")
+else:
+    time_vit = 0  # ensure defined for total_time
 
 total_time = time_r50 + time_efn + time_vit
-best_model = max([("ResNet50", results_r50), ("EfficientNet-B0", results_efn), ("ViT-B/16", results_vit)],
-                 key=lambda x: x[1]["KNN@5"])
+# Pick best only among models that actually completed
+completed = [(name, d["res"]) for name, d in ALL_RESULTS.items() if d["ok"]]
+best_model = max(completed, key=lambda x: x[1]["KNN@5"])
 
 print(f"\n{'='*65}")
 print(f"  FINAL SUMMARY")
@@ -489,7 +545,7 @@ print(f"{'='*65}")
 print(f"  Best model:    {best_model[0]} (Macro KNN@5 = {best_model[1]['KNN@5']*100:.1f}%)")
 print(f"  ResNet50:      {results_r50['KNN@5']*100:.1f}%")
 print(f"  EfficientNet:  {results_efn['KNN@5']*100:.1f}%")
-print(f"  ViT-B/16:      {results_vit['KNN@5']*100:.1f}%")
+print(f"  ViT-B/16:      {results_vit['KNN@5']*100:.1f}%" if vit_success else "  ViT-B/16:      OOM (skipped)")
 print(f"  Total time:    {total_time/60:.0f} min ({total_time/3600:.1f} hrs)")
 print(f"  GPU:           {torch.cuda.get_device_name(0) if device.type=='cuda' else 'CPU'}")
 print(f"{'='*65}")
