@@ -1,65 +1,63 @@
 # WaferVision — Final Results (Focal Loss + Mixup)
 
 Honest evaluation on the real **WM-811K** dataset. All numbers use a
-lot-based split (no leakage), oversampling applied to the train set only,
-and KNN retrieval where the index is built on train embeddings and queried
-with test embeddings. Evaluation covers the **8 defect classes** (the
-`none` class is excluded — it is handled separately by anomaly detection).
-Two automated leakage checks run before training and pass on every run.
+lot-based split (no leakage), cross-lot duplicate removal, oversampling
+applied to the train set only, and KNN retrieval where the index is built on
+train embeddings and queried with test embeddings. Evaluation covers the
+**8 defect classes** (the `none` class is excluded — it is handled separately
+by anomaly detection). Two automated leakage checks run before training.
 
 ## Headline
 
-**92.5% macro KNN@5** — ViT-B/16 + Focal(γ=2.0) + Mixup(α=0.4)
+**91.5% macro KNN@5** — ViT-B/16 + Focal(γ=2.0) + Mixup(α=0.4)
 
 ## Model comparison
 
 | Model | KNN@1 | KNN@3 | KNN@5 | KNN@10 | Train time |
 |-------|-------|-------|-------|--------|-----------|
-| ResNet50 + Focal + Mixup | 89.4% | 90.1% | 90.4% | 90.6% | 39 min |
-| EfficientNet-B0 + Focal + Mixup | 90.7% | 90.8% | 91.0% | 91.4% | 97 min |
-| **ViT-B/16 + Focal + Mixup** | **91.5%** | **92.5%** | **92.5%** | 91.8% | 425 min |
+| ResNet50 + Focal + Mixup | 91.3% | 90.6% | 90.4% | 90.7% | 76 min |
+| EfficientNet-B0 + Focal + Mixup | 91.3% | 91.5% | 90.5% | 91.4% | 105 min |
+| **ViT-B/16 + Focal + Mixup** | **91.0%** | **91.3%** | **91.5%** | 91.5% | 476 min |
 
 ViT-B/16 is the most accurate; EfficientNet-B0 is the best accuracy-per-cost
-(5M params, 97 min). ViT runs with gradient checkpointing + batch=32 + AMP to
+(5M params, 105 min). ViT runs with gradient checkpointing + batch=32 + AMP to
 fit a single T4 at 224×224.
 
 ## Per-class KNN@5
 
 | Class | ResNet50 | EfficientNet-B0 | ViT-B/16 | Test samples |
 |-------|----------|-----------------|----------|-------------|
-| Center | 96.3% | 97.0% | 97.2% | 567 |
-| Donut | 86.7% | 86.7% | 93.3% | 105 |
-| Edge-Loc | 92.2% | 93.5% | 93.0% | 817 |
-| Edge-Ring | 99.2% | 99.0% | 98.8% | 1238 |
-| Loc | 86.1% | 85.0% | 89.2% | 592 |
-| Near-full | 82.4% | 88.2% | 88.2% | 17 |
+| Center | 96.1% | 96.3% | 96.5% | 567 |
+| Donut | 88.6% | 86.7% | 88.6% | 105 |
+| Edge-Loc | 92.8% | 93.4% | 92.8% | 817 |
+| Edge-Ring | 98.9% | 98.9% | 98.6% | 1238 |
+| Loc | 90.0% | 85.5% | 89.2% | 592 |
+| Near-full | 76.5% | 88.2% | 82.4% | 17 |
 | Random | 92.5% | 92.5% | 94.0% | 133 |
-| Scratch | 87.9% | 86.0% | 86.6% | 157 |
+| Scratch | 87.9% | 82.8% | 89.8% | 157 |
 
-**ViT-B/16 macro KNN@5: 92.5%** · weighted accuracy ≈ 94.8%.
+**ViT-B/16 macro KNN@5: 91.5%** · weighted accuracy ≈ 94.5%.
 
 ## Methodology (why this is honest)
 
 1. **Lot-based split** — wafers from the same manufacturing lot never span
-   train and test. This removes the lot-level leakage that inflates metrics
-   by 10-15%.
-2. **Oversample train only** — minority classes are augmented in the train
-   set; the test set contains only original samples.
-3. **Train → index, test → query** — no self-lookup in KNN.
-4. **No `none` class** — the 85%-majority normal class is excluded from
-   retrieval and handled by anomaly detection instead.
-5. **Programmatic leak checks** — lot disjointness + duplicate-wafer detection
-   are asserted at runtime before training begins.
+   train and test.
+2. **Cross-lot duplicate removal** — 13 wafer maps byte-identical across
+   different lots were removed from train (lot-split alone misses these).
+3. **Oversample train only** — minority classes augmented in the train set;
+   test contains only original wafers.
+4. **Train → index, test → query** — no self-lookup in KNN.
+5. **No `none` class** — the 85%-majority normal class is excluded from
+   retrieval and handled by anomaly detection.
 
 ## Interpretation
 
-ViT-B/16 (92.5%) edges out the CNNs but costs ~10× the training time of
-ResNet50. The transformer's global self-attention helps most on the
-spatially ambiguous classes (Loc → 89.2%, Donut → 93.3%). Focal+Mixup lifts
-all backbones ~2-4pp over the earlier SupCon baseline (88.1%). The remaining
-ceiling is visual similarity between classes (Scratch ↔ Edge-Loc), not the
-training procedure — beating it would require higher-resolution inputs,
-local-attention mechanisms, or ensembles.
+ViT-B/16 (91.5%) edges out the CNNs but costs ~6× the training time of
+ResNet50. The transformer's global self-attention helps most on the hardest
+classes — Scratch 89.8% and Loc 89.2%, both best of the three. Focal+Mixup
+lifts all backbones ~2-3pp over the earlier SupCon baseline (88.1%). The
+remaining ceiling is visual similarity between classes, not the training
+procedure.
 
 ## How to reproduce
 

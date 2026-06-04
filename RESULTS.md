@@ -1,10 +1,10 @@
 # Final Results
 
-## Best: 92.5% Macro KNN@5 (Honest Evaluation)
+## Best: 91.5% Macro KNN@5 (Honest Evaluation)
 
 **Method:** ViT-B/16 + Focal Loss (γ=2.0) + Mixup (α=0.4)
 **Dataset:** WM-811K, 25,519 labeled defects (8 classes, no "none")
-**Split:** Lot-based 70/15/15 (no leakage between train/val/test)
+**Split:** Lot-based 70/15/15 (no leakage) + cross-lot duplicate removal
 **Evaluation:** KNN index on train embeddings, queries from test
 
 ---
@@ -13,9 +13,9 @@
 
 | Model | KNN@1 | KNN@3 | KNN@5 | KNN@10 | Train time | Params | Status |
 |-------|-------|-------|-------|--------|-----------|--------|--------|
-| ResNet50 | 89.4% | 90.1% | 90.4% | 90.6% | 39 min | 25M | ✅ |
-| EfficientNet-B0 | 90.7% | 90.8% | 91.0% | 91.4% | 97 min | 5M | ✅ best value |
-| **ViT-B/16** | **91.5%** | **92.5%** | **92.5%** | 91.8% | 425 min | 86M | ✅ **best accuracy** |
+| ResNet50 | 91.3% | 90.6% | 90.4% | 90.7% | 76 min | 25M | ✅ |
+| EfficientNet-B0 | 91.3% | 91.5% | 90.5% | 91.4% | 105 min | 5M | ✅ best value |
+| **ViT-B/16** | **91.0%** | **91.3%** | **91.5%** | 91.5% | 476 min | 86M | ✅ **best accuracy** |
 
 ---
 
@@ -23,17 +23,17 @@
 
 | Class | ResNet50 | EfficientNet-B0 | ViT-B/16 | Test Samples |
 |-------|----------|-----------------|----------|-------------|
-| Center | 96.3% | 97.0% | 97.2% | 567 |
-| Donut | 86.7% | 86.7% | 93.3% | 105 |
-| Edge-Loc | 92.2% | 93.5% | 93.0% | 817 |
-| Edge-Ring | 99.2% | 99.0% | 98.8% | 1238 |
-| Loc | 86.1% | 85.0% | 89.2% | 592 |
-| Near-full | 82.4% | 88.2% | 88.2% | 17 |
+| Center | 96.1% | 96.3% | 96.5% | 567 |
+| Donut | 88.6% | 86.7% | 88.6% | 105 |
+| Edge-Loc | 92.8% | 93.4% | 92.8% | 817 |
+| Edge-Ring | 98.9% | 98.9% | 98.6% | 1238 |
+| Loc | 90.0% | 85.5% | 89.2% | 592 |
+| Near-full | 76.5% | 88.2% | 82.4% | 17 |
 | Random | 92.5% | 92.5% | 94.0% | 133 |
-| Scratch | 87.9% | 86.0% | 86.6% | 157 |
-| **Macro avg** | **90.4%** | **91.0%** | **92.5%** | 3626 |
+| Scratch | 87.9% | 82.8% | 89.8% | 157 |
+| **Macro avg** | **90.4%** | **90.5%** | **91.5%** | 3626 |
 
-ViT-B/16 weighted accuracy ≈ 94.8%.
+ViT-B/16 weighted accuracy ≈ 94.5%.
 
 ---
 
@@ -53,13 +53,13 @@ ViT-B/16 weighted accuracy ≈ 94.8%.
 
 1. **Lot-based split** — wafers from the same manufacturing lot never appear in both train and test. Prevents lot-level leakage which inflates metrics by ~10-15%.
 
-2. **Oversampling after split** — rare classes augmented only in the train set. Test set contains only original samples.
+2. **Cross-lot duplicate removal** — WM-811K contains a few wafer maps duplicated across *different* lots, which a lot-based split alone does not catch. A hash check found and removed 13 such wafers from train (0.36% of test) before evaluation. Most published WM-811K work does not check for this.
 
-3. **Train→Index, Test→Query** — KNN builds the index on train embeddings and searches using test embeddings. No self-lookup.
+3. **Oversampling after split** — rare classes augmented only in the train set. Test set contains only original samples.
 
-4. **No "none" class** — the normal class (85% of dataset) is excluded from retrieval and handled separately via anomaly detection.
+4. **Train→Index, Test→Query** — KNN builds the index on train embeddings and searches using test embeddings. No self-lookup.
 
-5. **Programmatic leak checks** — the training script asserts (a) the three lot sets are disjoint and (b) no identical wafer tensor appears in both train and test. Both pass on every run.
+5. **No "none" class** — the normal class (85% of dataset) is excluded from retrieval and handled separately via anomaly detection.
 
 ---
 
@@ -72,14 +72,15 @@ ViT-B/16 weighted accuracy ≈ 94.8%.
 | SupCon (sample split, balanced) | 95.4% | ⚠️ Lot leakage |
 | SupCon (lot split, 9 classes incl. none) | 79.8% | "none" class drags down |
 | SupCon (lot split, 8 defects) | 88.1% | ✅ First honest result |
-| Focal+Mixup — ResNet50 (lot split) | 90.4% | ✅ Honest |
-| Focal+Mixup — EfficientNet-B0 (lot split) | 91.0% | ✅ Honest |
-| **Focal+Mixup — ViT-B/16 (lot split)** | **92.5%** | ✅ **Final best** |
+| Focal+Mixup — ResNet50 (lot split + dedup) | 90.4% | ✅ Honest |
+| Focal+Mixup — EfficientNet-B0 (lot split + dedup) | 90.5% | ✅ Honest |
+| **Focal+Mixup — ViT-B/16 (lot split + dedup)** | **91.5%** | ✅ **Final best** |
 
-**Conclusion:** ViT-B/16 is the most accurate backbone (92.5%) but ~10× slower
-to train than ResNet50; EfficientNet-B0 (91.0%, 5M params) is the best
+**Conclusion:** ViT-B/16 is the most accurate backbone (91.5%) but ~6× slower
+to train than ResNet50; EfficientNet-B0 (90.5%, 5M params) is the best
 accuracy-per-cost choice. Focal+Mixup improves on the SupCon baseline (88.1%)
-by 2-4pp across all backbones. The remaining ceiling is visual similarity
-between classes (Scratch ↔ Edge-Loc), not the training procedure.
+by 2-3pp. ViT is strongest on the hardest classes — Scratch 89.8% (best of
+three) and Loc 89.2%. The remaining ceiling is visual similarity between
+classes, not the training procedure.
 
 See [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md) for full analysis and literature comparison.

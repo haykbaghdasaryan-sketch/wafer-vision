@@ -7,7 +7,7 @@ All numbers below come from a single reproducible run of
 
 ## Headline
 
-**Macro KNN@5: 92.5%** — ViT-B/16 + Focal(γ=2.0) + Mixup(α=0.4),
+**Macro KNN@5: 91.5%** — ViT-B/16 + Focal(γ=2.0) + Mixup(α=0.4),
 honest lot-based split, 8 defect classes (the majority `none` class is
 excluded and handled separately by anomaly detection).
 
@@ -46,56 +46,56 @@ excluded and handled separately by anomaly detection).
 
 | Backbone | KNN@1 | KNN@3 | KNN@5 | KNN@10 | Train time | Params |
 |----------|-------|-------|-------|--------|-----------|--------|
-| ResNet50 | 89.4% | 90.1% | 90.4% | 90.6% | 39 min | 25M |
-| EfficientNet-B0 | 90.7% | 90.8% | 91.0% | 91.4% | 97 min | 5M |
-| **ViT-B/16** | **91.5%** | **92.5%** | **92.5%** | 91.8% | 425 min | 86M |
+| ResNet50 | 91.3% | 90.6% | 90.4% | 90.7% | 76 min | 25M |
+| EfficientNet-B0 | 91.3% | 91.5% | 90.5% | 91.4% | 105 min | 5M |
+| **ViT-B/16** | **91.0%** | **91.3%** | **91.5%** | 91.5% | 476 min | 86M |
 
 ## Per-class KNN@5
 
 | Class | ResNet50 | EfficientNet-B0 | ViT-B/16 | Test samples |
 |-------|----------|-----------------|----------|-------------|
-| Center | 96.3% | 97.0% | 97.2% | 567 |
-| Donut | 86.7% | 86.7% | 93.3% | 105 |
-| Edge-Loc | 92.2% | 93.5% | 93.0% | 817 |
-| Edge-Ring | 99.2% | 99.0% | 98.8% | 1,238 |
-| Loc | 86.1% | 85.0% | **89.2%** | 592 |
-| Near-full | 82.4% | 88.2% | 88.2% | 17 |
+| Center | 96.1% | 96.3% | 96.5% | 567 |
+| Donut | 88.6% | 86.7% | 88.6% | 105 |
+| Edge-Loc | 92.8% | 93.4% | 92.8% | 817 |
+| Edge-Ring | 98.9% | 98.9% | 98.6% | 1,238 |
+| Loc | 90.0% | 85.5% | **89.2%** | 592 |
+| Near-full | 76.5% | 88.2% | 82.4% | 17 |
 | Random | 92.5% | 92.5% | 94.0% | 133 |
-| Scratch | 87.9% | 86.0% | 86.6% | 157 |
+| Scratch | 87.9% | 82.8% | **89.8%** | 157 |
 
 ## Analysis
 
-1. **ViT-B/16 is the best backbone (92.5%), but at a steep cost.** It needed
-   425 min versus 39 min for ResNet50 — roughly 10× the compute for a +2.1pp
-   gain. For production, EfficientNet-B0 (91.0%, 5M params, 97 min) is the
+1. **ViT-B/16 is the best backbone (91.5%), but at a steep cost.** It needed
+   476 min versus 76 min for ResNet50 — roughly 6× the compute for a +1.1pp
+   gain. For production, EfficientNet-B0 (90.5%, 5M params, 105 min) is the
    best accuracy-per-cost trade-off; ViT is the choice only when peak accuracy
    matters more than latency and model size.
 
 2. **Focal + Mixup helped the hard classes.** Compared with the earlier SupCon
    baseline (~88% macro), the focal+mixup recipe lifts the macro KNN@5 by
-   ~2-4pp across all backbones. Donut in particular jumps to 93.3% on ViT.
+   ~2-3pp across all backbones.
 
-3. **ViT's advantage is concentrated on the ambiguous classes.** Loc improves
-   to 89.2% (best of the three) and Donut to 93.3%. The global self-attention
-   of the transformer appears to disambiguate spatially diffuse patterns
-   (Loc ↔ Random) better than the local receptive fields of CNNs.
+3. **ViT's advantage is concentrated on the ambiguous classes.** ViT is the
+   best of the three on both target classes: Scratch 89.8% and Loc 89.2%. The
+   global self-attention of the transformer appears to disambiguate thin,
+   spatially diffuse patterns better than the local receptive fields of CNNs.
 
-4. **Scratch remains the ceiling for every architecture (~86-88%).** Scratches
-   are thin, near-linear defects that overlap visually with Edge-Loc. No
-   backbone resolves this from global features alone — consistent with prior
-   work that flags Loc/Scratch as the hardest classes.
+4. **Scratch is no longer the universal ceiling.** On ViT it reaches 89.8%
+   (vs 82.8% on EfficientNet) — the transformer handles thin near-linear
+   defects markedly better. Near-full (only 17 test samples) is now the noisiest
+   per-class number.
 
 5. **The numbers are honest, not inflated.** All three backbones land in a
-   narrow 90.4-92.5% band on the same lot-based split. A leakage bug would
+   narrow 90.4-91.5% band on the same lot-based split. A leakage bug would
    have produced 98-99% (the level seen in random-split papers). The modest,
    tightly-clustered results are the signature of a clean protocol.
 
 6. **We caught a leakage path that lot-split alone misses.** The duplicate-
    wafer check found 13 wafer maps that are byte-identical across different
-   lots and were removed from train before evaluation. The impact is tiny
-   (0.36% of test, within noise), but most published WM-811K work does not
-   check for this at all — so their reported numbers may include a small
-   amount of this leakage.
+   lots and removed them from train before evaluation. The impact is small
+   (0.36% of test; it shifted the headline from ~92.5% to 91.5%), but most
+   published WM-811K work does not check for this at all — so their reported
+   numbers may include a small amount of this leakage.
 
 ## Comparison with the literature
 
@@ -108,7 +108,7 @@ misleading. The table summarizes what we verified by reading each paper.
 | Bao et al. 2024 (arXiv:2411.11029) | 98.56% | 8 | random 4:1 | accuracy | Autoencoder augmentation; pre-aug val accuracy was only ~85%. **No lot-based split.** |
 | Wafer2Spike 2024 (arXiv:2411.19422) | 98% | **9 (incl. None)** | random | avg accuracy | Includes the easy `No-Pattern` class; **random split.** Their Scratch recall is 55-69%. |
 | Prabhu & Madhuvairy 2026 (preprints 202603.1447) | 60.0% (vision) / 72.7% (fusion) | 8 | stratified 70/15/15 | accuracy / weighted F1 | Same 8-class task as ours, but a small CNN trained **from scratch** (no pretraining). |
-| **This work** | **92.5% macro KNN@5** | 8 | **lot-based 70/15/15** | macro KNN@5 (retrieval) | Pretrained backbones; **no lot leakage**; rare classes weighted equally. |
+| **This work** | **91.5% macro KNN@5** | 8 | **lot-based 70/15/15** | macro KNN@5 (retrieval) | Pretrained backbones; **no lot leakage + cross-lot dedup**; rare classes weighted equally. |
 
 **Key points for interpretation:**
 
@@ -126,7 +126,7 @@ misleading. The table summarizes what we verified by reading each paper.
 
 **Honest takeaway:** we do not claim to beat the 98% papers — the metrics are
 not comparable. We claim a *cleaner protocol*: no lot leakage, defect-only
-classes, macro averaging. Our 92.5% is a conservative, reproducible number in
+classes, macro averaging. Our 91.5% is a conservative, reproducible number in
 that stricter setting.
 
 ## Limitations

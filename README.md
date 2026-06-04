@@ -6,35 +6,35 @@ Research-grade platform for wafer defect analysis built on the WM-811K dataset (
 
 ## 🎯 Results (Honest Evaluation)
 
-**Macro-average KNN@5: 92.5%** (ViT-B/16 + Focal + Mixup) on 8 defect classes with lot-based split (no data leakage). Two automated leakage checks run before every training run and pass.
+**Macro-average KNN@5: 91.5%** (ViT-B/16 + Focal + Mixup) on 8 defect classes with lot-based split (no data leakage). Two automated leakage checks run before every training run: lot disjointness, and removal of cross-lot duplicate wafers (13 found and removed).
 
 ### Backbone comparison
 
 | Backbone | KNN@5 | Train time | Params |
 |----------|-------|-----------|--------|
-| ResNet50 | 90.4% | 39 min | 25M |
-| EfficientNet-B0 | 91.0% | 97 min | 5M |
-| **ViT-B/16** | **92.5%** | 425 min | 86M |
+| ResNet50 | 90.4% | 76 min | 25M |
+| EfficientNet-B0 | 90.5% | 105 min | 5M |
+| **ViT-B/16** | **91.5%** | 476 min | 86M |
 
 ### Per-class KNN@5 (ViT-B/16, best model)
 
 | Class | KNN@5 | Test Samples |
 |-------|-------|-------------|
-| Edge-Ring | 98.8% | 1238 |
-| Center | 97.2% | 567 |
+| Edge-Ring | 98.6% | 1238 |
+| Center | 96.5% | 567 |
 | Random | 94.0% | 133 |
-| Donut | 93.3% | 105 |
-| Edge-Loc | 93.0% | 817 |
+| Scratch | 89.8% | 157 |
 | Loc | 89.2% | 592 |
-| Near-full | 88.2% | 17 |
-| Scratch | 86.6% | 157 |
+| Donut | 88.6% | 105 |
+| Edge-Loc | 92.8% | 817 |
+| Near-full | 82.4% | 17 |
 
 **Evaluation methodology:**
 - Split by manufacturing LOT (not by sample) — prevents lot-level leakage
+- Cross-lot duplicate wafers removed from train (caught by hash check)
 - KNN index built on TRAIN embeddings, queries from TEST
 - Oversampling applied ONLY to train set with augmentation (not identical copies)
 - No "none" class in retrieval evaluation (handled separately via anomaly detection)
-- Programmatic leak checks (lot disjointness + duplicate-wafer detection) enforced at runtime
 
 ## 🏗️ Architecture
 
@@ -116,9 +116,9 @@ wafer-vision/
 | Pretrained (no training) | ImageNet ResNet50 | ~72% | Baseline |
 | Fine-tune (sample split) | CrossEntropy + class weights | 97.7% (biased) | ⚠️ Lot leakage present |
 | SupCon (lot split, 8 defects) | Balanced, augmented | 88.1% | First honest result |
-| Focal+Mixup — ResNet50 | Lot split, balanced | 90.4% | Honest |
-| Focal+Mixup — EfficientNet-B0 | Lot split, balanced | 91.0% | Honest |
-| **Focal+Mixup — ViT-B/16** | **Lot split, balanced** | **92.5%** | ✅ **Best, honest** |
+| Focal+Mixup — ResNet50 | Lot split, balanced, dedup | 90.4% | Honest |
+| Focal+Mixup — EfficientNet-B0 | Lot split, balanced, dedup | 90.5% | Honest |
+| **Focal+Mixup — ViT-B/16** | **Lot split, balanced, dedup** | **91.5%** | ✅ **Best, honest** |
 
 See [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md) for the full analysis and comparison with the literature.
 

@@ -60,24 +60,24 @@ retrieval and treated as an anomaly-detection problem.
 
 | Backbone | KNN@5 | Train time | Params |
 |----------|-------|-----------|--------|
-| ResNet50 | 90.4% | 39 min | 25M |
-| EfficientNet-B0 | 91.0% | 97 min | 5M |
-| **ViT-B/16** | **92.5%** | 425 min | 86M |
+| ResNet50 | 90.4% | 76 min | 25M |
+| EfficientNet-B0 | 90.5% | 105 min | 5M |
+| **ViT-B/16** | **91.5%** | 476 min | 86M |
 
 ### Per-class KNN@5 (ViT-B/16, best)
 
 | Class | KNN@5 | Test Samples |
 |-------|-------|-------------|
-| Edge-Ring | 98.8% | 1,238 |
-| Center | 97.2% | 567 |
+| Edge-Ring | 98.6% | 1,238 |
+| Center | 96.5% | 567 |
 | Random | 94.0% | 133 |
-| Donut | 93.3% | 105 |
-| Edge-Loc | 93.0% | 817 |
+| Scratch | 89.8% | 157 |
 | Loc | 89.2% | 592 |
-| Near-full | 88.2% | 17 |
-| Scratch | 86.6% | 157 |
+| Donut | 88.6% | 105 |
+| Edge-Loc | 92.8% | 817 |
+| Near-full | 82.4% | 17 |
 
-**Macro-average KNN@5: 92.5%**
+**Macro-average KNN@5: 91.5%**
 
 ### Ablation: impact of evaluation methodology
 
@@ -85,26 +85,29 @@ retrieval and treated as an anomaly-detection problem.
 |-------|-------------|-----------------|
 | Sample-split + oversample before split | 95.4% | Data leakage (copies in test) |
 | Lot-split + include "none" | 79.8% | "none" dominates (85% of test) |
-| **Lot-split + defects only** | **88.1%–92.5%** | **Honest** (by backbone) |
+| **Lot-split + defects only + dedup** | **88.1%–91.5%** | **Honest** (by backbone) |
 
 ## Conclusions
 
-1. **ViT-B/16 is the most accurate backbone (92.5%)** under honest lot-split
-   evaluation, but costs ~10× the training time of ResNet50. EfficientNet-B0
-   (91.0%, 5M params) is the best accuracy-per-cost trade-off.
+1. **ViT-B/16 is the most accurate backbone (91.5%)** under honest lot-split
+   evaluation, but costs ~6× the training time of ResNet50. EfficientNet-B0
+   (90.5%, 5M params) is the best accuracy-per-cost trade-off.
 
-2. **Focal + Mixup improves on the SupCon baseline** (88.1%) by 2-4pp across
-   all backbones, with the largest gains on ambiguous classes (Donut, Loc).
+2. **Focal + Mixup improves on the SupCon baseline** (88.1%) by 2-3pp across
+   all backbones.
 
 3. **Evaluation methodology critically affects reported numbers.** Naive
-   sample-based splitting inflates metrics by ~7-15% due to lot-level leakage.
+   sample-based splitting inflates metrics by ~7-15% due to lot-level leakage;
+   cross-lot duplicate wafers add a further small inflation that lot-split
+   alone does not catch (we found and removed 13).
 
-4. **Rare classes benefit from balanced training.** Donut reaches 93.3% and
-   Random 94.0% on ViT once oversampled with augmentation.
+4. **Rare classes benefit from balanced training.** Random reaches 94.0% on ViT
+   once oversampled with augmentation.
 
-5. **Scratch remains the ceiling (~86-88%) for every architecture.** It shares
-   visual patterns with Edge-Loc; global features alone cannot fully separate
-   it. This is a data/representation limit, not a training-procedure limit.
+5. **ViT handles the hardest classes best.** Scratch reaches 89.8% and Loc
+   89.2% on ViT (both best of the three backbones) — the transformer separates
+   thin, diffuse defects better than the CNNs. The remaining ceiling is visual
+   similarity between classes, a data/representation limit.
 
 6. **The system is production-viable for common defects** (Center, Edge-Ring,
-   Edge-Loc, Donut, Random) with >93% retrieval accuracy.
+   Edge-Loc, Random) with >92% retrieval accuracy.
