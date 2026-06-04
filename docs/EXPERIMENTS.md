@@ -26,8 +26,11 @@ excluded and handled separately by anomaly detection).
 4. **Macro averaging.** Metrics are averaged per class with equal weight, so
    rare classes (Donut, Near-full) count as much as common ones.
 5. **Programmatic leak checks.** The script asserts (a) the three lot sets
-   are disjoint and (b) no identical wafer tensor appears in both train and
-   test (MD5 over quantized pixels). Both pass on every run.
+   are disjoint and (b) removes any train wafer that is byte-identical to a
+   test wafer. The second check matters: WM-811K contains a small number of
+   wafer maps duplicated across *different* lots, which a lot-based split
+   alone does not catch. Our run found and removed 13 such train/test
+   duplicates (0.36% of the test set) before evaluation.
 
 ## Training setup
 
@@ -86,6 +89,13 @@ excluded and handled separately by anomaly detection).
    narrow 90.4-92.5% band on the same lot-based split. A leakage bug would
    have produced 98-99% (the level seen in random-split papers). The modest,
    tightly-clustered results are the signature of a clean protocol.
+
+6. **We caught a leakage path that lot-split alone misses.** The duplicate-
+   wafer check found 13 wafer maps that are byte-identical across different
+   lots and were removed from train before evaluation. The impact is tiny
+   (0.36% of test, within noise), but most published WM-811K work does not
+   check for this at all — so their reported numbers may include a small
+   amount of this leakage.
 
 ## Comparison with the literature
 

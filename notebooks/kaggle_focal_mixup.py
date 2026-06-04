@@ -241,24 +241,43 @@ train_labels = torch.tensor(train_l, dtype=torch.int64); del train_l
 gc.collect()
 print(f"\n  Train={tuple(train_data.shape)}  Val={tuple(val_data.shape)}  Test={tuple(test_data.shape)}")
 
-# --- Leakage guard #2: no identical wafer tensor shared between train and test ---
-# Hash each preprocessed wafer (bytes of the rounded tensor) and check set intersection.
-# This catches any duplicate wafer that might have slipped across the split.
-def _tensor_hashes(data):
-    import hashlib
-    hashes = set()
-    arr = (data.numpy() * 255).round().astype(np.uint8)  # quantize to ignore fp noise
-    for i in range(arr.shape[0]):
-        hashes.add(hashlib.md5(arr[i].tobytes()).hexdigest())
-    return hashes
+# --- Leakage guard #2: remove any train wafer byte-identical to a test wafer ---
+# Lot-split prevents lot overlap, but WM-811K contains a few wafer maps that are
+# duplicated across DIFFERENT lots. Those slip past the lot split. We hash every
+# wafer (quantized bytes) and drop from TRAIN any wafer identical to a test wafer,
+# so a test query can never retrieve an identical copy from the KNN index. The
+# test set is left complete and untouched.
+import hashlib
 
-_train_hashes = _tensor_hashes(train_data)
-_test_hashes = _tensor_hashes(test_data)
-_dupes = _train_hashes & _test_hashes
-assert len(_dupes) == 0, f"LEAK: {len(_dupes)} identical wafer(s) appear in BOTH train and test!"
-print(f"  [leak-check] no duplicate wafers across train/test "
-      f"({len(_train_hashes)} unique train, {len(_test_hashes)} unique test, 0 shared)")
-del _train_hashes, _test_hashes, _dupes
+def _row_hash(row_u8):
+    return hashlib.md5(row_u8.tobytes()).hexdigest()
+
+_test_arr = (test_data.numpy() * 255).round().astype(np.uint8)
+_test_hashes = {_row_hash(_test_arr[i]) for i in range(_test_arr.shape[0])}
+del _test_arr
+
+_train_arr = (train_data.numpy() * 255).round().astype(np.uint8)
+_keep = np.ones(len(train_data), dtype=bool)
+for i in range(_train_arr.shape[0]):
+    if _row_hash(_train_arr[i]) in _test_hashes:
+        _keep[i] = False
+del _train_arr
+_removed = int((~_keep).sum())
+
+if _removed > 0:
+    train_data = train_data[_keep]
+    train_labels = train_labels[_keep]
+    print(f"  [leak-check] removed {_removed} train wafer(s) byte-identical to test "
+          f"(WM-811K cross-lot duplicates) -> train now {len(train_data):,}")
+else:
+    print("  [leak-check] no duplicate wafers across train/test (0 shared)")
+
+# Re-verify: must be zero shared now.
+_train_hashes = {_row_hash(r) for r in (train_data.numpy() * 255).round().astype(np.uint8)}
+assert len(_train_hashes & _test_hashes) == 0, "LEAK: duplicate wafers still present after dedup!"
+print(f"  [leak-check] verified 0 train/test duplicates "
+      f"({len(_train_hashes):,} unique train, {len(_test_hashes):,} unique test)")
+del _train_hashes, _test_hashes, _keep
 gc.collect()
 
 
