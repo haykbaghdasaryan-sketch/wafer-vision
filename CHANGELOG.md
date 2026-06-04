@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0] - 2026-06-04
+
+### Added
+- Focal Loss (γ=2.0) + Mixup (α=0.4) training recipe
+- Full 3-backbone comparison on the complete WM-811K defect set (ResNet50,
+  EfficientNet-B0, ViT-B/16) via `notebooks/kaggle_focal_mixup.py`
+- Mixed precision (AMP) training + ViT gradient checkpointing (fits a single T4)
+- Programmatic leakage checks: lot disjointness + duplicate-wafer detection
+- Incremental result saving to `focal_mixup_results.json`
+- Literature comparison section in `docs/EXPERIMENTS.md`
+
+### Results
+- **ViT-B/16 reaches 92.5% macro KNN@5** (best), EfficientNet-B0 91.0%,
+  ResNet50 90.4% — all under honest lot-based split, 8 defect classes
+- Focal+Mixup improves on the SupCon baseline (88.1%) by 2-4pp per backbone
+
 ## [0.1.0] - 2026-05-31
 
 ### Added
@@ -21,6 +37,6 @@ All notable changes to this project will be documented in this file.
 - GitHub Actions CI pipeline
 
 ### Experiments
-- Achieved 88.1% macro KNN@5 on 8 defect classes (honest lot-split evaluation)
+- Achieved 88.1% macro KNN@5 on 8 defect classes (honest lot-split evaluation, SupCon)
 - SupCon outperforms Triplet loss on balanced data
 - Lot-level split prevents ~15% metric inflation from manufacturing lot leakage

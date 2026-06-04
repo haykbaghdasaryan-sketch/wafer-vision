@@ -2,28 +2,39 @@
 
 **Intelligent Wafer Defect Embedding & Retrieval System**
 
-Research-grade platform for wafer defect analysis built on the WM-811K dataset (811,457 wafer maps, 9 defect classes). Combines deep learning feature extraction, metric learning, embedding evaluation, explainability, anomaly detection, and interactive visualization.
+Research-grade platform for wafer defect analysis built on the WM-811K dataset (811,457 wafer maps; 8 defect classes evaluated, plus a `none` class handled by anomaly detection). Combines deep learning feature extraction, metric learning, embedding evaluation, explainability, anomaly detection, and interactive visualization.
 
 ## 🎯 Results (Honest Evaluation)
 
-**Macro-average KNN@5: 88.1%** on 8 defect classes with lot-level split (no data leakage).
+**Macro-average KNN@5: 92.5%** (ViT-B/16 + Focal + Mixup) on 8 defect classes with lot-based split (no data leakage). Two automated leakage checks run before every training run and pass.
 
-| Class | KNN@5 | P@5 | Test Samples |
-|-------|-------|-----|-------------|
-| Center | 95.2% | 94.6% | 567 |
-| Edge-Loc | 93.0% | 92.8% | 817 |
-| Donut | 91.4% | 90.9% | 105 |
-| Edge-Ring | 90.9% | 90.9% | 1238 |
-| Random | 90.2% | 90.7% | 133 |
-| Loc | 86.0% | 85.9% | 592 |
-| Scratch | 81.5% | 81.5% | 157 |
-| Near-full | 76.5% | 80.0% | 17 |
+### Backbone comparison
+
+| Backbone | KNN@5 | Train time | Params |
+|----------|-------|-----------|--------|
+| ResNet50 | 90.4% | 39 min | 25M |
+| EfficientNet-B0 | 91.0% | 97 min | 5M |
+| **ViT-B/16** | **92.5%** | 425 min | 86M |
+
+### Per-class KNN@5 (ViT-B/16, best model)
+
+| Class | KNN@5 | Test Samples |
+|-------|-------|-------------|
+| Edge-Ring | 98.8% | 1238 |
+| Center | 97.2% | 567 |
+| Random | 94.0% | 133 |
+| Donut | 93.3% | 105 |
+| Edge-Loc | 93.0% | 817 |
+| Loc | 89.2% | 592 |
+| Near-full | 88.2% | 17 |
+| Scratch | 86.6% | 157 |
 
 **Evaluation methodology:**
 - Split by manufacturing LOT (not by sample) — prevents lot-level leakage
 - KNN index built on TRAIN embeddings, queries from TEST
 - Oversampling applied ONLY to train set with augmentation (not identical copies)
 - No "none" class in retrieval evaluation (handled separately via anomaly detection)
+- Programmatic leak checks (lot disjointness + duplicate-wafer detection) enforced at runtime
 
 ## 🏗️ Architecture
 
@@ -103,9 +114,13 @@ wafer-vision/
 | Experiment | Setup | Macro KNN@5 | Notes |
 |---|---|---|---|
 | Pretrained (no training) | ImageNet ResNet50 | ~72% | Baseline |
-| Fine-tune (30 epochs) | CrossEntropy + class weights | 88.6% (biased) | Lot leakage present |
-| Triplet (30 epochs) | Hard negative mining | Similar | Lot leakage present |
-| **SupCon (60 epochs, honest)** | **Lot-split, balanced, augmented** | **88.1%** | **Final honest result** |
+| Fine-tune (sample split) | CrossEntropy + class weights | 97.7% (biased) | ⚠️ Lot leakage present |
+| SupCon (lot split, 8 defects) | Balanced, augmented | 88.1% | First honest result |
+| Focal+Mixup — ResNet50 | Lot split, balanced | 90.4% | Honest |
+| Focal+Mixup — EfficientNet-B0 | Lot split, balanced | 91.0% | Honest |
+| **Focal+Mixup — ViT-B/16** | **Lot split, balanced** | **92.5%** | ✅ **Best, honest** |
+
+See [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md) for the full analysis and comparison with the literature.
 
 ## 📜 License
 

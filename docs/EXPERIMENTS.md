@@ -1,102 +1,136 @@
 # Experiment Results
 
-## Final Honest Evaluation
+All numbers below come from a single reproducible run of
+`notebooks/kaggle_focal_mixup.py` on the **full** WM-811K defect set
+(Kaggle, Tesla T4, seed 42). Two automated leakage checks run before training
+(lot disjointness + duplicate-wafer detection); both pass.
 
-**Method:** SupCon (Supervised Contrastive Learning) with ResNet50 backbone  
-**Dataset:** WM-811K, 25,519 labeled defect samples (8 classes, excluding "none")  
-**Split:** Lot-based (70/15/15) — no manufacturing lot appears in multiple splits  
-**Training:** 60 epochs, balanced 4K/class with heavy augmentation, lr=5e-5  
-**Evaluation:** KNN index on TRAIN embeddings, queries from TEST embeddings  
+## Headline
 
-### Per-Class Results
+**Macro KNN@5: 92.5%** — ViT-B/16 + Focal(γ=2.0) + Mixup(α=0.4),
+honest lot-based split, 8 defect classes (the majority `none` class is
+excluded and handled separately by anomaly detection).
 
-| Class | KNN@5 | Precision@5 | Test Samples | Train (original) |
-|-------|-------|-------------|-------------|-----------------|
-| Center | 95.2% | 94.6% | 567 | 3,006 |
-| Donut | 91.4% | 90.9% | 105 | 389 |
-| Edge-Loc | 93.0% | 92.8% | 817 | 3,632 |
-| Edge-Ring | 90.9% | 90.9% | 1,238 | 6,776 |
-| Loc | 86.0% | 85.9% | 592 | 2,516 |
-| Near-full | 76.5% | 80.0% | 17 | 104 |
-| Random | 90.2% | 90.7% | 133 | 606 |
-| Scratch | 81.5% | 81.5% | 157 | 835 |
+## Evaluation protocol (why it is honest)
 
-**Macro-average KNN@5: 88.1%**
+1. **Lot-based split (70/15/15).** Wafers are grouped by manufacturing
+   `lotName`; an entire lot goes to exactly one split. No lot ever spans
+   train/val/test. This removes the lot-level leakage that inflates metrics
+   by ~10-15% (wafers from the same lot are near-identical).
+2. **Oversample train only.** Minority classes are augmented up to the
+   largest class (6,882/class) using rotation, flip, and noise. The val and
+   test sets contain only original wafers.
+3. **Train → index, test → query.** The KNN index is built on train
+   embeddings and queried with test embeddings. A query can never retrieve
+   itself.
+4. **Macro averaging.** Metrics are averaged per class with equal weight, so
+   rare classes (Donut, Near-full) count as much as common ones.
+5. **Programmatic leak checks.** The script asserts (a) the three lot sets
+   are disjoint and (b) no identical wafer tensor appears in both train and
+   test (MD5 over quantized pixels). Both pass on every run.
 
-### Comparison Across Methods
+## Training setup
 
-| Method | Macro KNN@5 | NMI | Silhouette | Notes |
-|--------|-------------|-----|-----------|-------|
-| Pretrained (ImageNet) | ~72% | 0.109 | 0.036 | No training |
-| Fine-tune (CrossEntropy) | 97.7%* | 0.377 | 0.411 | *Biased (no lot-split) |
-| Triplet (metric learning) | 97.7%* | 0.552 | 0.721 | *Biased (no lot-split) |
-| SupCon (balanced, lot-split) | **88.1%** | ~0.7 | ~0.5 | **Honest** |
+- **Backbones:** ResNet50 (2048-d), EfficientNet-B0 (1280-d), ViT-B/16 (768-d),
+  all ImageNet-pretrained.
+- **Loss:** Focal (γ=2.0) with inverse-frequency class weights.
+- **Augmentation:** Mixup (α=0.4, p=0.5) + rotation/flip/noise/random-erasing.
+- **Optimizer:** AdamW, cosine schedule + linear warmup, mixed precision (AMP).
+- **Input:** 96×96, 3-channel (ViT upsamples to 224×224 internally).
+- **Early stopping:** patience 30 on validation loss.
 
-*Asterisk results are inflated due to lot-level data leakage in earlier experiments.
+## Final comparison (macro KNN@5)
 
-### Key Findings
+| Backbone | KNN@1 | KNN@3 | KNN@5 | KNN@10 | Train time | Params |
+|----------|-------|-------|-------|--------|-----------|--------|
+| ResNet50 | 89.4% | 90.1% | 90.4% | 90.6% | 39 min | 25M |
+| EfficientNet-B0 | 90.7% | 90.8% | 91.0% | 91.4% | 97 min | 5M |
+| **ViT-B/16** | **91.5%** | **92.5%** | **92.5%** | 91.8% | 425 min | 86M |
 
-1. **Lot-level split is critical.** Without it, metrics are inflated by ~10-15% because wafers from the same manufacturing lot look nearly identical.
+## Per-class KNN@5
 
-2. **SupCon outperforms Triplet** on balanced data when evaluated honestly. SupCon uses all same-class pairs (not just triplets), providing richer gradients.
+| Class | ResNet50 | EfficientNet-B0 | ViT-B/16 | Test samples |
+|-------|----------|-----------------|----------|-------------|
+| Center | 96.3% | 97.0% | 97.2% | 567 |
+| Donut | 86.7% | 86.7% | 93.3% | 105 |
+| Edge-Loc | 92.2% | 93.5% | 93.0% | 817 |
+| Edge-Ring | 99.2% | 99.0% | 98.8% | 1,238 |
+| Loc | 86.1% | 85.0% | **89.2%** | 592 |
+| Near-full | 82.4% | 88.2% | 88.2% | 17 |
+| Random | 92.5% | 92.5% | 94.0% | 133 |
+| Scratch | 87.9% | 86.0% | 86.6% | 157 |
 
-3. **Rare classes need augmentation.** Donut (555 total), Near-full (149 total) benefit significantly from oversampling with augmentation during training.
+## Analysis
 
-4. **Class "none" is a separate problem.** It represents 85% of the dataset and is internally highly diverse. Treating it as an anomaly detection problem (is this defective or not?) is more appropriate than including it in retrieval.
+1. **ViT-B/16 is the best backbone (92.5%), but at a steep cost.** It needed
+   425 min versus 39 min for ResNet50 — roughly 10× the compute for a +2.1pp
+   gain. For production, EfficientNet-B0 (91.0%, 5M params, 97 min) is the
+   best accuracy-per-cost trade-off; ViT is the choice only when peak accuracy
+   matters more than latency and model size.
 
-5. **88.1% is an honest, publication-ready result.** It exceeds most baseline papers on WM-811K (~85% with SVM/basic CNN) but does not reach SOTA (~98% with specialized architectures).
+2. **Focal + Mixup helped the hard classes.** Compared with the earlier SupCon
+   baseline (~88% macro), the focal+mixup recipe lifts the macro KNN@5 by
+   ~2-4pp across all backbones. Donut in particular jumps to 93.3% on ViT.
 
-### Limitations
+3. **ViT's advantage is concentrated on the ambiguous classes.** Loc improves
+   to 89.2% (best of the three) and Donut to 93.3%. The global self-attention
+   of the transformer appears to disambiguate spatially diffuse patterns
+   (Loc ↔ Random) better than the local receptive fields of CNNs.
 
-- Near-full: only 17 test samples — results statistically unreliable (±15%)
-- Lot-based split may over-penalize: some defect patterns span multiple lots
-- Single backbone (ResNet50) — EfficientNet/ViT may perform differently
-- No ensemble methods explored
-- MAP computed at top-100 neighbors (approximation)
+4. **Scratch remains the ceiling for every architecture (~86-88%).** Scratches
+   are thin, near-linear defects that overlap visually with Edge-Loc. No
+   backbone resolves this from global features alone — consistent with prior
+   work that flags Loc/Scratch as the hardest classes.
 
----
+5. **The numbers are honest, not inflated.** All three backbones land in a
+   narrow 90.4-92.5% band on the same lot-based split. A leakage bug would
+   have produced 98-99% (the level seen in random-split papers). The modest,
+   tightly-clustered results are the signature of a clean protocol.
 
-## Experiment: Focal Loss + Mixup (Targeting Loc/Scratch)
+## Comparison with the literature
 
-**Hypothesis:** Loc (85%) and Scratch (84%) underperform because:
-1. Standard CE treats all misclassifications equally — focal loss down-weights easy majority-class examples (gamma=2.0)
-2. Decision boundaries for rare classes are underfitted — mixup (alpha=0.4) creates virtual training examples by interpolating between pairs
+Reported accuracy on WM-811K is often 98-99%, but the evaluation protocols
+differ from ours in ways that make a direct number-to-number comparison
+misleading. The table summarizes what we verified by reading each paper.
 
-**Config:** `configs/training/focal_mixup.yaml`
-```yaml
-training:
-  mode: finetune
-  loss: focal
-  focal_gamma: 2.0
-  mixup_enabled: true
-  mixup_alpha: 0.4
-  mixup_p: 0.5
-  epochs: 60
-  learning_rate: 5e-5
-  batch_size: 64
-```
+| Work | Reported | Classes | Split | Metric | Notes |
+|------|----------|---------|-------|--------|-------|
+| Bao et al. 2024 (arXiv:2411.11029) | 98.56% | 8 | random 4:1 | accuracy | Autoencoder augmentation; pre-aug val accuracy was only ~85%. **No lot-based split.** |
+| Wafer2Spike 2024 (arXiv:2411.19422) | 98% | **9 (incl. None)** | random | avg accuracy | Includes the easy `No-Pattern` class; **random split.** Their Scratch recall is 55-69%. |
+| Prabhu & Madhuvairy 2026 (preprints 202603.1447) | 60.0% (vision) / 72.7% (fusion) | 8 | stratified 70/15/15 | accuracy / weighted F1 | Same 8-class task as ours, but a small CNN trained **from scratch** (no pretraining). |
+| **This work** | **92.5% macro KNN@5** | 8 | **lot-based 70/15/15** | macro KNN@5 (retrieval) | Pretrained backbones; **no lot leakage**; rare classes weighted equally. |
 
-**Expected Impact:**
-- Focal loss → stronger gradients from hard Loc/Scratch samples that are currently misclassified with high confidence
-- Mixup → smoother embedding manifold, better generalization on underrepresented class boundaries
-- Combined: target +3-5% on Loc and Scratch without sacrificing majority-class accuracy
+**Key points for interpretation:**
 
-**Run command:**
-```bash
-python scripts/run_benchmark.py --config configs/training/focal_mixup.yaml
-```
+- The 98% results use **random splits**, which let near-identical wafers from
+  the same lot fall into both train and test — a known source of inflation. We
+  use a lot-based split, which is stricter.
+- Wafer2Spike's 98% is over **9 classes including the easy `None` class**,
+  which raises the average; we evaluate the 8 harder defect classes only.
+- Our task is **retrieval (macro KNN@5)**, not direct classification, and uses
+  macro averaging that penalizes weak rare classes. These choices lower the
+  headline number but make it more faithful.
+- The most directly comparable study (Prabhu 2026, same 8 classes, stratified
+  split) reports 60-73% with a from-scratch CNN, which calibrates how hard the
+  8-class problem is once the easy `none` class is removed.
 
-## Hardware & Timing
+**Honest takeaway:** we do not claim to beat the 98% papers — the metrics are
+not comparable. We claim a *cleaner protocol*: no lot leakage, defect-only
+classes, macro averaging. Our 92.5% is a conservative, reproducible number in
+that stricter setting.
 
-| Platform | GPU | RAM | Training Time |
-|----------|-----|-----|--------------|
-| Local PC | GTX 1650 (4GB) | 8 GB | ~3 min (5K subset) |
-| Google Colab | Tesla T4 (16GB) | 12 GB | ~20 min (19K subset) |
-| Kaggle | Tesla T4 (16GB) | 30 GB | ~20 min (32K balanced) |
+## Limitations
+
+- **Single seed (42).** Reported metrics are from one run; multiple seeds
+  would be needed to establish variance and statistical significance.
+- **Near-full has only 17 test samples** — its per-class number is noisy.
+- **96×96 input** (upsampled for ViT). Native or higher resolution might shift
+  results, especially for thin Scratch defects.
+- **One dataset.** Generalization to other fabs/datasets is untested.
 
 ## Reproducibility
 
-- Random seed: 42 (all splits and training)
-- PyTorch deterministic mode enabled
-- Full code available in repository
-- Kaggle notebook reproducible with `colab_full_training.ipynb`
+- Script: `notebooks/kaggle_focal_mixup.py` (single Kaggle cell, Run All).
+- Dataset: `qingyi/wm811k-wafer-map` → `LSWMD.pkl`.
+- Outputs: `focal_mixup_results.json` (+ per-model `.pth` checkpoints).
+- Seed 42, deterministic split, leakage checks enforced at runtime.
