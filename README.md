@@ -105,6 +105,7 @@ wafer-vision/
 ├── scripts/              # CLI pipeline scripts
 ├── tests/                # 522 unit + integration tests
 ├── docs/                 # Architecture, experiments, API reference
+├── notebooks/            # Kaggle run script (kaggle_focal_mixup.py) + results
 ├── colab_full_training.ipynb  # Cloud training notebook
 └── Makefile              # All pipeline targets
 ```

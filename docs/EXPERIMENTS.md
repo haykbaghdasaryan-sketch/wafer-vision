@@ -131,12 +131,16 @@ that stricter setting.
 
 ## Limitations
 
-- **Single seed (42).** Reported metrics are from one run; multiple seeds
-  would be needed to establish variance and statistical significance.
+- **Single run, single dataset (by design).** Per the assignment constraints
+  (free Kaggle GPU tier), the study uses one training run and one dataset
+  (WM-811K). Multiple seeds and additional datasets would further establish
+  variance, statistical significance, and cross-fab generalization, but were
+  out of scope here.
 - **Near-full has only 17 test samples** — its per-class number is noisy.
 - **96×96 input** (upsampled for ViT). Native or higher resolution might shift
   results, especially for thin Scratch defects.
-- **One dataset.** Generalization to other fabs/datasets is untested.
+- **Focal and Mixup are applied together.** A component-wise ablation
+  (focal-only vs mixup-only) would isolate each contribution.
 
 ## Reproducibility
 
